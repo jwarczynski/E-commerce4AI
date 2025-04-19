@@ -11,3 +11,8 @@ wheels/
 .idea
 
 .env
+uv.lock
+*.pem
+
+semantic_models
+playgorund/
