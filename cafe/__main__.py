@@ -3,11 +3,13 @@ from pathlib import Path
 from cafe.agents import AgentFactory, EvaluatingAgent, FeatureEngineeringAgent, JudgeAgent
 from cafe.core.semantic_model import SemanticModelManager
 from cafe.core.snowflake_client import SnowflakeClient
-from cafe.utils.logger import setup_logger
+from cafe.utils.logger import set_global_log_level, setup_logger
 
 
 def main():
+    set_global_log_level()
     logger = setup_logger(__name__)
+
     snowflake_client = SnowflakeClient()
     semantic_model_manager = SemanticModelManager()
 
