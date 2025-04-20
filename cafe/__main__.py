@@ -3,7 +3,6 @@ from pathlib import Path
 from cafe.agents import AgentFactory, EvaluatingAgent, FeatureEngineeringAgent, JudgeAgent
 from cafe.core.semantic_model import SemanticModelManager
 from cafe.core.snowflake_client import SnowflakeClient
-from cafe.utils.jwt_token import call_cortex_tool, parse_tool_call
 from cafe.utils.logger import setup_logger
 
 
@@ -12,18 +11,11 @@ def main():
     snowflake_client = SnowflakeClient()
     semantic_model_manager = SemanticModelManager()
 
-    response = snowflake_client.call_cortex_tool(
-        "What is the weather in New York?"
-    )
-    parsed = parse_tool_call(response)
-
-    print(response)
-    print(parsed)
-
     # Create agents
     feature_engineering_agent: FeatureEngineeringAgent = AgentFactory.create_agent(
         "feature_engineering", snowflake_client, semantic_model_manager
     )
+
     judge_agent: JudgeAgent = AgentFactory.create_agent("judge", snowflake_client)
     evaluating_agent: EvaluatingAgent = AgentFactory.create_agent("evaluating", snowflake_client)
 

@@ -119,7 +119,7 @@ class SnowflakeClient:
         finally:
             cursor.close()
 
-    def call_cortex_tool(self, prompt: str) -> dict:
+    def call_cortex_llm(self, data: dict[str, Any]) -> dict:
         """Call the Cortex tool API with a prompt and return the response."""
         snowflake_host = self.config["host"]
         url = f"https://{snowflake_host}/api/v2/cortex/inference:complete"
@@ -129,32 +129,6 @@ class SnowflakeClient:
             "Authorization": f"Bearer {jwt_token}",
             "Content-Type": "application/json",
             "Accept": "application/json"
-        }
-
-        data = {
-            "model": "claude-3-5-sonnet",
-            "messages": [{"role": "user", "content": prompt}],
-            "tools": [
-                {
-                    "tool_spec": {
-                        "type": "generic",
-                        "name": "get_weather",
-                        "input_schema": {
-                            "type": "object",
-                            "properties": {
-                                "location": {
-                                    "type": "string",
-                                    "description": "The city and state, e.g. San Francisco, CA"
-                                }
-                            },
-                            "required": ["location"]
-                        }
-                    }
-                }
-            ],
-            "max_tokens": 4096,
-            "top_p": 1,
-            "stream": False
         }
 
         response = requests.post(url, headers=headers, json=data)
