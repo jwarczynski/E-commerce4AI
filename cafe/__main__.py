@@ -21,15 +21,19 @@ def main():
 
     # Workflow
     semantic_model_path = Path.cwd() / "semantic_models" / "revenue_timeseries.yaml"
-    prompt = "Generate an executable SQL query to calculate total daily revenue, cogs, forecasted revenue, and a 7-day moving average."
 
-    # Step 1: Generate query
-    sql = feature_engineering_agent.run(prompt, semantic_model_path)
-    logger.info(f"Generated SQL: {sql}")
+    # Step 1: Generate business question
+    business_question = feature_engineering_agent.make_bussiness_quesiton(semantic_model_path=semantic_model_path)
+    business_question = f"""{business_question}
+     
+Please provide the SQL query to achieve this. This query should either extend an existing database table by adding new columns while retaining the original ones, or potentially create an entirely new table."
+"""
+    # Step 2: Generate SQL query
+    sql = feature_engineering_agent.run(business_question, semantic_model_path=semantic_model_path)
 
-    # Step 2: Validate query
-    semantic_model = semantic_model_manager.load_yaml(semantic_model_path)
-    validation_results = judge_agent.run(sql, prompt, semantic_model)
+    # Step 3: Validate query
+    validation_results = judge_agent.run(sql_query=sql, business_question=business_question)
+    logger.debug(f"Validation results: {validation_results}")
 
     return
     if all(result["valid"] for result in validation_results.values()):
