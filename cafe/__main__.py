@@ -1,184 +1,87 @@
-import json
-import re
 from pathlib import Path
 
-from smolagents import ChatMessage, ToolCallingAgent, tool
-from smolagents.models import ChatMessageToolCall, ChatMessageToolCallDefinition
+import yaml
+from jinja2 import Environment, FileSystemLoader
 
-from cafe.agents import AgentFactory, EvaluatingAgent, FeatureEngineeringAgent, JudgeAgent
-from cafe.core.semantic_model import SemanticModelManager
-from cafe.core.snowflake_client import SnowflakeClient
+from cafe import semantic_model_manager, snowflake_client
+from cafe.agents.tool_calling_snowflake_agent import SnowflakeApiModel, ToolCallingSnowflakeAgent
+from cafe.agents.tools import ask_for_sql, save_semantic_model, text_output_tool, update_verified_queries
 from cafe.utils.logger import set_global_log_level, setup_logger
 
-snowflake_client: SnowflakeClient = None
+set_global_log_level()
+logger = setup_logger(__name__)
 
 
-def convert_messages_to_snowflake_format(messages):
-    """Convert messages to Snowflake format."""
-    converted_messages = []
-    for msg in messages:
-        role = str(msg["role"].value) if hasattr(msg["role"], "value") else str(msg["role"])
-
-        # Concatenate all "text" parts in the content list
-        parts = msg["content"]
-        content = ""
-        for part in parts:
-            if part.get("type") == "text":
-                content += part["text"]
-            else:
-                raise ValueError(f"Unsupported content type: {part.get('type')}")
-
-        converted_messages.append({"role": role, "content": content})
-    return converted_messages
-
-
-def snowflake_api_model(messages, stop_sequences=None, tools_to_call_from=None):
-    global snowflake_client
-
-    valid_roles = {"assistant", "user", "system"}
-    converted_messages = convert_messages_to_snowflake_format(messages)
-    converted_messages = [msg for msg in converted_messages if msg["role"] in valid_roles]
-    # Convert tools if provided
-    tools = []
-    if tools_to_call_from:
-        tools = [convert_smolagent_tool_to_snowflake_tool(tool) for tool in tools_to_call_from]
-
-    body = {
-        "model": "claude-3-5-sonnet",
-        "messages": converted_messages,
-        # "tools": tools,
-        "max_tokens": 4096,
-        "top_p": 1,
-        "stream": False
-    }
-
-    response = snowflake_client.call_cortex_llm(body)
-    raw_answer = response["choices"][0]["message"]
-    full_text = raw_answer.get("content", "")
-
-    # Trim at stop sequence if applicable
-    if stop_sequences:
-        for stop in stop_sequences:
-            idx = full_text.find(stop)
-            if idx != -1:
-                full_text = full_text[:idx]
-                break
-
-    # Extract tool call (if exists) using regex
-    tool_calls = None
-    if "Action:" in full_text:
-        try:
-            # Split the response on 'Action:' and keep the rest as JSON
-            response_parts = full_text.split("Action:", 1)
-            answer_text = response_parts[0].strip()
-
-            action_str = response_parts[1].strip()
-
-            # Use regex to extract JSON part (in case there's trailing content)
-            match = re.search(r"\{.*\}", action_str, re.DOTALL)
-            if match:
-                tool_json = json.loads(match.group(0))
-                tool_call_def = ChatMessageToolCallDefinition(
-                    name=tool_json["name"],
-                    arguments=tool_json["arguments"],
-                )
-                tool_calls = [
-                    ChatMessageToolCall(
-                        function=tool_call_def,
-                        id="auto-generated",  # Placeholder, adjust if you get real ID
-                        type="function",  # Placeholder, e.g. "function"
-                    )
-                ]
-        except Exception as e:
-            print(f"Failed to parse tool call: {e}")
-            answer_text = full_text  # fallback to full response
-    else:
-        answer_text = full_text
-
-    return ChatMessage(
-        role="assistant",
-        content=answer_text,
-        tool_calls=tool_calls,
-        raw=raw_answer
-    )
-
-
-def convert_smolagent_tool_to_snowflake_tool(smol_tool):
-    # Convert SmolAgent tool to Snowflake Cortex-compatible tool_spec
-    return {
-        "tool_spec": {
-            "type": "generic",  # Assuming all tools are 'generic'
-            "name": smol_tool.name,
-            "description": smol_tool.description,
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    arg_name: {
-                        "type": arg_info.get("type", "string"),
-                        "description": arg_info.get("description", "")
-                    }
-                    for arg_name, arg_info in smol_tool.inputs.items()
-                },
-                "required": list(smol_tool.inputs.keys())
-            }
-        }
-    }
-
-
-@tool
-def ask_for_sql(business_question: str, semantic_model: str) -> str:
+def load_and_render_template(template_path, semantic_model_path, semantic_model_content):
     """
-    Call the Cortex Analyst API to generate SQL queries aiming to answer the business question based on the semantic model which describes the tables and columns.
+    Load a YAML prompt template and render it with provided values using Jinja2.
+
     Args:
-        business_question (str): The business question to ask for.
-        semantic_model (str): The semantic model describing the tables and columns.
+        template_path (Path): Path to the YAML template file.
+        semantic_model_path (str): Path to the semantic model file.
+        semantic_model_content (str): Content of the semantic model.
+        logger: Logger instance for logging errors and debug information.
+
     Returns:
-        str: The generated SQL query.
+        str: Rendered task prompt.
+
     Raises:
-        ValueError: If no SQL is generated by Cortex Analyst.
+        FileNotFoundError: If the template file is not found.
+        yaml.YAMLError: If the YAML file cannot be parsed.
+        Exception: If template rendering fails.
     """
-    global snowflake_client
-    response = snowflake_client.call_cortex_analyst(
-        {
-            "messages": [{"role": "user", "content": [{"type": "text", "text": business_question}]}],
-            "semantic_model": semantic_model,
-        }
-    )
-    for item in response["message"]["content"]:
-        if item["type"] == "sql":
-            return item["statement"]
-    raise ValueError("No SQL generated by Cortex Analyst")
+    # Set up Jinja2 environment
+    template_dir = template_path.parent
+    env = Environment(loader=FileSystemLoader(template_dir))
+
+    # Load the YAML prompt template
+    try:
+        with open(template_path, 'r') as file:
+            template_data = yaml.safe_load(file)
+            task_template_str = template_data['task']
+    except FileNotFoundError:
+        logger.error(f"Prompt template file not found at {template_path}")
+        raise
+    except yaml.YAMLError as e:
+        logger.error(f"Error parsing YAML template: {e}")
+        raise
+
+    # Create a Jinja2 template from the task string
+    template = env.from_string(task_template_str)
+
+    # Populate the template with values
+    try:
+        task = template.render(
+            semantic_model_path=str(semantic_model_path),
+            semantic_model_content=semantic_model_content
+        )
+        logger.debug("Populated task prompt:\n%s", task)
+        return task
+    except Exception as e:
+        logger.error(f"Error rendering template: {e}")
+        raise
 
 
 def main():
-    set_global_log_level()
-    logger = setup_logger(__name__)
-
-    global snowflake_client
-    snowflake_client = SnowflakeClient()
-    semantic_model_manager = SemanticModelManager()
     semantic_model_path = Path.cwd() / "semantic_models" / "revenue_timeseries.yaml"
     semantic_model_content = semantic_model_manager.load_yaml(semantic_model_path)
 
-    tool_calling_agent = ToolCallingAgent(tools=[ask_for_sql], model=snowflake_api_model)
-
-    task = f"""
-You are a helpful assistant whose goal is to create usefull sql queries by calling cortex analyst providing him insightful question about the data described in the provided semantic model. This question should be relevant for creating new features that could improve the performance of a forecasting model (like XGBoost) for business metrics. The question can also be framed from a business analytics perspective, aiming to uncover meaningful trends or patterns.
-
-Here is the content of the semantic model file:
-```yaml
-{semantic_model_content}
-```
-"""
-    res = tool_calling_agent.run(task)
-    logger.info(f"Tool calling agent result: {res}")
-    exit(0)
-
-    # Create agents
-    feature_engineering_agent: FeatureEngineeringAgent = AgentFactory.create_agent(
-        "feature_engineering", snowflake_client, semantic_model_manager
+    template_path = Path.cwd() / "cafe" / "prompts" / "task_prompt_template.yaml"
+    task = load_and_render_template(
+        template_path=template_path,
+        semantic_model_path=str(semantic_model_path),
+        semantic_model_content=semantic_model_content,
     )
 
+    snowflake_model = SnowflakeApiModel(snowflake_client)
+    tool_calling_agent = ToolCallingSnowflakeAgent(
+        tools=[
+            ask_for_sql, text_output_tool, save_semantic_model, update_verified_queries
+        ],
+        model=snowflake_model,
+    )
+
+    tool_calling_agent.run(task, stream=False, reset=True, max_steps=10)
     semantic_model_manager.show_semantic_model_graph()
 
 
