@@ -134,3 +134,22 @@ class SnowflakeClient:
         response = requests.post(url, headers=headers, json=data)
         response.raise_for_status()
         return response.json()
+
+    def call_cortex_analyst(self, request_body: dict[str, Any]) -> dict[str, Any]:
+        """Send a message to Cortex Analyst API."""
+
+        host = self.config["host"]
+        resp = requests.post(
+            url=f"https://{host}/api/v2/cortex/analyst/message",
+            json=request_body,
+            headers={
+                "Authorization": f"Bearer {self.get_jwt_token()}",
+                "Content-Type": "application/json",
+            },
+        )
+        request_id = resp.headers.get("X-Snowflake-Request-Id")
+        if resp.status_code < 400:
+            self.logger.debug(f"Response from Cortex Analyst: {resp.json()}")
+            return {**resp.json(), "request_id": request_id}
+        else:
+            raise Exception(f"Failed request (id: {request_id}): {resp.text}")

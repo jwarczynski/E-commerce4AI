@@ -1,8 +1,6 @@
 from pathlib import Path
 from typing import Any, Dict
 
-import requests
-
 from cafe.core.semantic_model import SemanticModelManager
 from cafe.core.snowflake_client import SnowflakeClient
 from .base_agent import BaseAgent
@@ -53,20 +51,7 @@ Here is the content of the semantic model file:
             "semantic_model": semantic_model,
         }
 
-        resp = requests.post(
-            url=f"https://{self.host}/api/v2/cortex/analyst/message",
-            json=request_body,
-            headers={
-                "Authorization": f"Bearer {self.snowflake_client.get_jwt_token()}",
-                "Content-Type": "application/json",
-            },
-        )
-        request_id = resp.headers.get("X-Snowflake-Request-Id")
-        if resp.status_code < 400:
-            self.logger.debug(f"Response from Cortex Analyst: {resp.json()}")
-            return {**resp.json(), "request_id": request_id}
-        else:
-            raise Exception(f"Failed request (id: {request_id}): {resp.text}")
+        return self.snowflake_client.call_cortex_analyst(request_body)
 
     def call_cortex_tool(self, prompt: str) -> dict:
         """Call the Cortex tool API with a prompt and return the response."""
@@ -96,7 +81,7 @@ Here is the content of the semantic model file:
             "stream": False
         }
 
-        return self.snowflake_client.call_cortex_llm(prompt, data)
+        return self.snowflake_client.call_cortex_llm(data)
 
     def call_llm(self, prompt: str) -> dict:
         """Call the Cortex tool API with a prompt and return the response."""
