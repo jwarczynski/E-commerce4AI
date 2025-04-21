@@ -62,3 +62,7 @@ class SemanticModelManager:
             yaml.safe_dump(new_model, file)
         self.graph.add_edge(original_model_path, new_model_path)
         self.logger.info(f"Created new semantic model: {new_model_path}")
+
+    def show_semantic_model_graph(self):
+        """Display the semantic model graph."""
+        self.graph.display_graph()

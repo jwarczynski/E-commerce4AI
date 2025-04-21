@@ -179,70 +179,7 @@ Here is the content of the semantic model file:
         "feature_engineering", snowflake_client, semantic_model_manager
     )
 
-    judge_agent: JudgeAgent = AgentFactory.create_agent("judge", snowflake_client)
-    evaluating_agent: EvaluatingAgent = AgentFactory.create_agent("evaluating", snowflake_client)
-
-    # Workflow
-
-    # Step 1: Generate business question
-    business_question = feature_engineering_agent.make_bussiness_quesiton(semantic_model_path=semantic_model_path)
-    business_question = f"""{business_question}
-     
-Please provide the SQL query to achieve this. This query should either extend an existing database table by adding new columns while retaining the original ones, or potentially create an entirely new table."
-"""
-    # Step 2: Generate SQL query
-    sql = feature_engineering_agent.run(business_question, semantic_model_path=semantic_model_path)
-
-    # Step 3: Validate query
-    validation_results = judge_agent.run(sql_query=sql, business_question=business_question)
-    is_query_usefull, adds_table_or_column = validation_results.get("is_usefull", False), validation_results.get(
-        "adds_table_or_column",
-        False
-    )
-    logger.debug(f"Validation results: {validation_results}")
-
-    if not adds_table_or_column:
-        modify_query_prompt = f"""
-Cortex Analyst created sql query to answer the business question:
-{business_question}
----
-The SQL query is:
-{sql}
----
-Please modify the following SQL query created by cortex analyst to add new columns to the existing table retaining original columns or create a new table.
-"""
-        sql = feature_engineering_agent.run(modify_query_prompt, semantic_model_path=semantic_model_path)
-
-    return
-    if all(result["valid"] for result in validation_results.values()):
-        # Step 3: Update semantic model
-        semantic_model_manager.update_verified_queries(
-            semantic_model_path,
-            "daily_revenue_features",
-            question=prompt,
-            sql=sql,
-        )
-
-        # Step 4: Create new semantic model (example new table)
-        new_table = {
-            "name": "extended_daily_revenue",
-            "description": "Extended table with 7-day moving average features",
-            "base_table": {
-                "database": "dog_cortex_analyst_demo",
-                "schema": "revenue_timeseries",
-                "table": "extended_daily_revenue"
-            },
-            "dimensions": [
-                {"name": "date", "expr": "date", "data_type": "date"},
-                {"name": "revenue_7day_avg", "expr": "revenue_7day_avg", "data_type": "number"}
-            ]
-        }
-        new_model_path = "extended_revenue_timeseries.yaml"
-        semantic_model_manager.create_new_semantic_model(semantic_model_path, new_model_path, new_table)
-
-        # Step 5: Evaluate results
-        metrics = evaluating_agent.run([sql])
-        logger.info(f"Evaluation metrics: {metrics}")
+    semantic_model_manager.show_semantic_model_graph()
 
 
 if __name__ == "__main__":
