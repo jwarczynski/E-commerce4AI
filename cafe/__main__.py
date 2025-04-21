@@ -1,17 +1,178 @@
+import json
+import re
 from pathlib import Path
+
+from smolagents import ChatMessage, ToolCallingAgent, tool
+from smolagents.models import ChatMessageToolCall, ChatMessageToolCallDefinition
 
 from cafe.agents import AgentFactory, EvaluatingAgent, FeatureEngineeringAgent, JudgeAgent
 from cafe.core.semantic_model import SemanticModelManager
 from cafe.core.snowflake_client import SnowflakeClient
 from cafe.utils.logger import set_global_log_level, setup_logger
 
+snowflake_client: SnowflakeClient = None
+
+
+def convert_messages_to_snowflake_format(messages):
+    """Convert messages to Snowflake format."""
+    converted_messages = []
+    for msg in messages:
+        role = str(msg["role"].value) if hasattr(msg["role"], "value") else str(msg["role"])
+
+        # Concatenate all "text" parts in the content list
+        parts = msg["content"]
+        content = ""
+        for part in parts:
+            if part.get("type") == "text":
+                content += part["text"]
+            else:
+                raise ValueError(f"Unsupported content type: {part.get('type')}")
+
+        converted_messages.append({"role": role, "content": content})
+    return converted_messages
+
+
+def snowflake_api_model(messages, stop_sequences=None, tools_to_call_from=None):
+    global snowflake_client
+
+    valid_roles = {"assistant", "user", "system"}
+    converted_messages = convert_messages_to_snowflake_format(messages)
+    converted_messages = [msg for msg in converted_messages if msg["role"] in valid_roles]
+    # Convert tools if provided
+    tools = []
+    if tools_to_call_from:
+        tools = [convert_smolagent_tool_to_snowflake_tool(tool) for tool in tools_to_call_from]
+
+    body = {
+        "model": "claude-3-5-sonnet",
+        "messages": converted_messages,
+        # "tools": tools,
+        "max_tokens": 4096,
+        "top_p": 1,
+        "stream": False
+    }
+
+    response = snowflake_client.call_cortex_llm(body)
+    raw_answer = response["choices"][0]["message"]
+    full_text = raw_answer.get("content", "")
+
+    # Trim at stop sequence if applicable
+    if stop_sequences:
+        for stop in stop_sequences:
+            idx = full_text.find(stop)
+            if idx != -1:
+                full_text = full_text[:idx]
+                break
+
+    # Extract tool call (if exists) using regex
+    tool_calls = None
+    if "Action:" in full_text:
+        try:
+            # Split the response on 'Action:' and keep the rest as JSON
+            response_parts = full_text.split("Action:", 1)
+            answer_text = response_parts[0].strip()
+
+            action_str = response_parts[1].strip()
+
+            # Use regex to extract JSON part (in case there's trailing content)
+            match = re.search(r"\{.*\}", action_str, re.DOTALL)
+            if match:
+                tool_json = json.loads(match.group(0))
+                tool_call_def = ChatMessageToolCallDefinition(
+                    name=tool_json["name"],
+                    arguments=tool_json["arguments"],
+                )
+                tool_calls = [
+                    ChatMessageToolCall(
+                        function=tool_call_def,
+                        id="auto-generated",  # Placeholder, adjust if you get real ID
+                        type="function",  # Placeholder, e.g. "function"
+                    )
+                ]
+        except Exception as e:
+            print(f"Failed to parse tool call: {e}")
+            answer_text = full_text  # fallback to full response
+    else:
+        answer_text = full_text
+
+    return ChatMessage(
+        role="assistant",
+        content=answer_text,
+        tool_calls=tool_calls,
+        raw=raw_answer
+    )
+
+
+def convert_smolagent_tool_to_snowflake_tool(smol_tool):
+    # Convert SmolAgent tool to Snowflake Cortex-compatible tool_spec
+    return {
+        "tool_spec": {
+            "type": "generic",  # Assuming all tools are 'generic'
+            "name": smol_tool.name,
+            "description": smol_tool.description,
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    arg_name: {
+                        "type": arg_info.get("type", "string"),
+                        "description": arg_info.get("description", "")
+                    }
+                    for arg_name, arg_info in smol_tool.inputs.items()
+                },
+                "required": list(smol_tool.inputs.keys())
+            }
+        }
+    }
+
+
+@tool
+def ask_for_sql(business_question: str, semantic_model: str) -> str:
+    """
+    Call the Cortex Analyst API to generate SQL queries aiming to answer the business question based on the semantic model which describes the tables and columns.
+    Args:
+        business_question (str): The business question to ask for.
+        semantic_model (str): The semantic model describing the tables and columns.
+    Returns:
+        str: The generated SQL query.
+    Raises:
+        ValueError: If no SQL is generated by Cortex Analyst.
+    """
+    global snowflake_client
+    response = snowflake_client.call_cortex_analyst(
+        {
+            "messages": [{"role": "user", "content": [{"type": "text", "text": business_question}]}],
+            "semantic_model": semantic_model,
+        }
+    )
+    for item in response["message"]["content"]:
+        if item["type"] == "sql":
+            return item["statement"]
+    raise ValueError("No SQL generated by Cortex Analyst")
+
 
 def main():
     set_global_log_level()
     logger = setup_logger(__name__)
 
+    global snowflake_client
     snowflake_client = SnowflakeClient()
     semantic_model_manager = SemanticModelManager()
+    semantic_model_path = Path.cwd() / "semantic_models" / "revenue_timeseries.yaml"
+    semantic_model_content = semantic_model_manager.load_yaml(semantic_model_path)
+
+    tool_calling_agent = ToolCallingAgent(tools=[ask_for_sql], model=snowflake_api_model)
+
+    task = f"""
+You are a helpful assistant whose goal is to create usefull sql queries by calling cortex analyst providing him insightful question about the data described in the provided semantic model. This question should be relevant for creating new features that could improve the performance of a forecasting model (like XGBoost) for business metrics. The question can also be framed from a business analytics perspective, aiming to uncover meaningful trends or patterns.
+
+Here is the content of the semantic model file:
+```yaml
+{semantic_model_content}
+```
+"""
+    res = tool_calling_agent.run(task)
+    logger.info(f"Tool calling agent result: {res}")
+    exit(0)
 
     # Create agents
     feature_engineering_agent: FeatureEngineeringAgent = AgentFactory.create_agent(
@@ -22,7 +183,6 @@ def main():
     evaluating_agent: EvaluatingAgent = AgentFactory.create_agent("evaluating", snowflake_client)
 
     # Workflow
-    semantic_model_path = Path.cwd() / "semantic_models" / "revenue_timeseries.yaml"
 
     # Step 1: Generate business question
     business_question = feature_engineering_agent.make_bussiness_quesiton(semantic_model_path=semantic_model_path)
@@ -35,7 +195,23 @@ Please provide the SQL query to achieve this. This query should either extend an
 
     # Step 3: Validate query
     validation_results = judge_agent.run(sql_query=sql, business_question=business_question)
+    is_query_usefull, adds_table_or_column = validation_results.get("is_usefull", False), validation_results.get(
+        "adds_table_or_column",
+        False
+    )
     logger.debug(f"Validation results: {validation_results}")
+
+    if not adds_table_or_column:
+        modify_query_prompt = f"""
+Cortex Analyst created sql query to answer the business question:
+{business_question}
+---
+The SQL query is:
+{sql}
+---
+Please modify the following SQL query created by cortex analyst to add new columns to the existing table retaining original columns or create a new table.
+"""
+        sql = feature_engineering_agent.run(modify_query_prompt, semantic_model_path=semantic_model_path)
 
     return
     if all(result["valid"] for result in validation_results.values()):
