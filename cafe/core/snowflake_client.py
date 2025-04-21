@@ -91,7 +91,7 @@ class SnowflakeClient:
             token = token.decode("utf-8")
 
         decoded_token = jwt.decode(token, key=self.private_key.public_key(), algorithms=["RS256"])
-        self.logger.info("Generated a JWT with the following payload:\n{}".format(decoded_token))
+        self.logger.debug("Generated a JWT with the following payload:\n{}".format(decoded_token))
 
         return token
 
