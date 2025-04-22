@@ -103,3 +103,23 @@ def update_verified_queries(sql_query: str, business_question: str, query_name: 
         file_path=semantic_model_path, query_name=query_name, question=business_question, sql=sql_query
     )
     return str(semantic_model_path)
+
+
+@tool
+def execute_sql_query(sql_query: str) -> dict:
+    """
+    Execute the SQL query and return the result.
+    Args:
+        sql_query (str): The SQL query to execute.
+    Returns:
+        dict[str, Any]: The result of the SQL query. The result contains 'columns' and 'data' keys.
+        'columns' is a list of column names and 'data' is a list of forst 5 rows, where each row is a tuple of values.
+    """
+    sql_result = snowflake_client.execute_query(sql_query)
+    data = sql_result["data"]
+    columns = sql_result["columns"]
+
+    return {
+        "columns": columns,
+        "data": data[:5]
+    }
