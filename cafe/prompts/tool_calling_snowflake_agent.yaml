@@ -20,6 +20,8 @@ system_prompt: |-
   - {{ agent.name }}: {{ agent.description }}
   {%- endfor %}
   {%- endif %}
+  
+  If you call a sql_queries_verifier team memebr remeber to give him a detailed task, and to provide the sql query you want to verify as an argument as well as business question you come up and semantic model too.
 
   Here are the rules you should always follow to solve your task:
   1. ALWAYS provide a tool call, else you will fail.
