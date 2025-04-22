@@ -312,7 +312,7 @@ class ToolCallingSnowflakeAgent(MultiStepAgent):
                         "content": [
                             {
                                 "type": "text",
-                                "text": str(tool_res)
+                                "text": tool_res
                             }
                         ]
                     }
