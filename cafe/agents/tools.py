@@ -75,13 +75,11 @@ def save_semantic_model(semantic_model: str, base_semantic_model_path: str) -> s
     Throws:
         ValueError: If the semantic model is not valid.
     """
-    # global semantic_model_manager
     new_semantic_model_path = Path.cwd().parent / "semantic_models" / f"revenue_timeseries{time.time()}.yaml"
 
     with open(new_semantic_model_path, "w") as f:
         f.write(semantic_model)
 
-    # Add the new semantic model to the graph
     semantic_model_manager.add_new_semantic_model(semantic_model, new_semantic_model_path, base_semantic_model_path)
     return str(new_semantic_model_path)
 
@@ -98,7 +96,6 @@ def update_verified_queries(sql_query: str, business_question: str, query_name: 
     Returns:
         str: The path to the updated semantic model file.
     """
-    # global semantic_model_manager
     semantic_model_manager.update_verified_queries(
         file_path=semantic_model_path, query_name=query_name, question=business_question, sql=sql_query
     )
