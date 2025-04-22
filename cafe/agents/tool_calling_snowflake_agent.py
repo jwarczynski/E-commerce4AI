@@ -388,16 +388,31 @@ def action_step_to_messages(memory_step, summary_mode: bool = False, show_model_
                 content_list=memory_step.observations,
             )
         )
-    # if memory_step.error is not None:
-    #     error_message = (
-    #             "Error:\n"
-    #             + str(memory_step.error)
-    #             + "\nNow let's retry: take care not to repeat previous errors! If you have retried several times, try a completely different approach.\n"
-    #     )
-    #     message_content = f"Call id: {memory_step.tool_calls[0].id}\n" if memory_step.tool_calls else ""
-    #     message_content += error_message
-    #     messages.append(
-    #         Message(role=MessageRole.TOOL_RESPONSE, content=message_content)
-    #     )
+    if memory_step.error is not None:
+        error_message = (
+                "Error:\n"
+                + str(memory_step.error)
+                + "\nNow let's retry: take care not to repeat previous errors! If you have retried several times, try a completely different approach.\n"
+        )
+        message_content = f"Call id: {memory_step.tool_calls[0].id}\n" if memory_step.tool_calls else ""
+        message_content += error_message
+        conten_list = [
+          {
+            "type": "tool_results",
+            "tool_results": {
+              "tool_use_id": memory_step.tool_calls[0].id,
+              "name": memory_step.tool_calls[0].name,
+              "content": [
+                {
+                  "type": "text",
+                  "text": error_message
+                }
+              ]
+            }
+          }
+        ] if memory_step.tool_calls else []
+        messages.append(
+            SnowFlakeMessage(role=MessageRole.USER, content=message_content, content_list=conten_list)
+        )
 
     return messages
