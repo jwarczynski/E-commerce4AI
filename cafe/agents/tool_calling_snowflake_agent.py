@@ -149,10 +149,12 @@ class ToolCallingSnowflakeAgent(MultiStepAgent):
             model: Callable[[List[Dict[str, str]]], ChatMessage],
             prompt_templates: Optional[PromptTemplates] = None,
             planning_interval: Optional[int] = None,
+            prompt_templates_path: Optional[Path] = None,
             **kwargs,
     ):
+        prompt_templates_path = prompt_templates_path or (Path(__file__).parent.parent / "prompts" / "tool_calling_snowflake_agent.yaml")
         prompt_templates = prompt_templates or yaml.safe_load(
-            (Path(__file__).parent.parent / "prompts" / "tool_calling_snowflake_agent.yaml").read_text()
+            prompt_templates_path.read_text()
         )
         super().__init__(
             tools=tools,
